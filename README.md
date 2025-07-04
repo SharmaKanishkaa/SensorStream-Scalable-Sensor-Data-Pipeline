@@ -84,7 +84,7 @@ Separate Airflow DAG refreshes config and credentials weekly.
 
 ```
 
-## 🧱 Project Structure
+## Project Structure
 
 ```
 sensor-pipeline/
@@ -111,9 +111,9 @@ sensor-pipeline/
 └── README.md
 ```
 
-## ⚙️ Installation & Setup
+## Installation & Setup
 
-### 1. ✅ Prerequisites
+### 1. Prerequisites
 
 * Python 3.8+
 * Java 11
@@ -124,7 +124,7 @@ sensor-pipeline/
   * Secrets Manager
 * PostgreSQL instance with sensor data
 
-### 2. 🖥️ Local Setup
+### 2. Local Setup
 
 ```bash
 git clone https://github.com/SharmaKanishkaa/SensorStream-Scalable-Sensor-Data-Pipeline-.git
@@ -134,7 +134,7 @@ cd SensorStream-Scalable-Sensor-Data-Pipeline
 pip install -r requirements.txt
 ```
 
-### 3. 🚀 Run Locally (Dev Mode)
+### 3. Run Locally (Dev Mode)
 
 ```bash
 spark-submit \
@@ -144,7 +144,7 @@ spark-submit \
 
 ---
 
-## ☁️ Airflow Orchestration
+## Airflow Orchestration
 
 ### DAG 1: `sensor_data_pipeline`
 
@@ -159,11 +159,11 @@ spark-submit \
 * Rotates AWS Secrets
 * Pulls fresh regex patterns from config service
 
-> 📂 Set Airflow Variables for dynamic config (e.g. `SENSOR_BUCKET`, `SENSOR_PATTERNS`)
+> Set Airflow Variables for dynamic config (e.g. `SENSOR_BUCKET`, `SENSOR_PATTERNS`)
 
 ---
 
-## 🛠️ Optimization Techniques Used
+## Optimization Techniques Used
 
 | Technique                         | Purpose                                |
 | --------------------------------- | -------------------------------------- |
@@ -175,7 +175,7 @@ spark-submit \
 | JDBC Partitioning                 | Parallel reads from PostgreSQL         |
 | Schema Enforcement                | Validation, pruning, and type safety   |
 
-## 🔐 Security
+##  Security
 
 * Uses **AWS IAM Role** or **AWS Secrets Manager** for credentials
 * Configurable via Airflow, AWS, or local JSON
