@@ -84,33 +84,6 @@ Separate Airflow DAG refreshes config and credentials weekly.
 
 ```
 
-## Project Structure
-
-```
-sensor-pipeline/
-│
-├── dags/
-│   ├── sensor_pipeline_dag.py        # Main Airflow DAG for pipeline
-│   └── config_manager_dag.py         # Airflow DAG for rotating config and secrets
-│
-├── config/
-│   └── pipeline_config.json          # Local JSON fallback config
-│
-├── src/
-│   ├── config_manager.py             # Loads config from Airflow or AWS
-│   ├── pipeline.py                   # Orchestration logic (SensorDataPipeline)
-│   ├── loader.py                     # DataLoader for local and S3 reads
-│   ├── processor.py                  # DataProcessor with transformation logic
-│   ├── writer.py                     # S3Writer with optimized output
-│   └── db.py                         # JDBC connection manager
-│
-├── logs/
-│   └── run.log                       # Execution logs
-│
-├── requirements.txt
-└── README.md
-```
-
 ## Installation & Setup
 
 ### 1. Prerequisites
