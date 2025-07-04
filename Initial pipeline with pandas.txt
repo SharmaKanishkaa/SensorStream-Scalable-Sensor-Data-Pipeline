@@ -1,0 +1,191 @@
+import os
+import json
+import s3fs
+import logging
+import datetime
+import boto3
+import pyarrow
+import pandas as pd
+import concurrent.futures
+import pyarrow.parquet as pq
+from urllib.parse import quote_plus
+from sqlalchemy import create_engine, inspect, text
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def create_db_connection(user, password, host, dbname):
+    user_encoded = quote_plus(user)
+    password_encoded = quote_plus(password)
+    conn_string = f"postgresql+psycopg2://{user_encoded}:{password_encoded}@{host}/{dbname}"
+    engine = create_engine(conn_string)
+    return engine
+
+def load_data(file_path, file_type):
+    try:
+        if file_type == 'csv':
+            data = pd.read_csv(file_path)
+        elif file_type == 'parquet':
+            data = pd.read_parquet(file_path, engine='pyarrow')
+        else:
+            raise ValueError('Unsupported file type')
+        data['datetime'] = pd.to_datetime(data['datetime'])
+        return data
+    except Exception as e:
+        logging.error(f"Error loading data from {file_path}: {str(e)}")
+        raise
+
+def filter_tables(tables, year=2024, start_month=8):
+    filtered_tables = []
+    for table in tables:
+        parts = table.split('_')
+        if len(parts) > 2 and parts[-2].isdigit() and parts[-1].isdigit():
+            table_year = int(parts[-2])
+            table_month = int(parts[-1])
+            if table_year > year or (table_year == year and table_month >= start_month):
+                filtered_tables.append(table)
+    return filtered_tables
+
+def execute_query(query, engine):
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text(query))
+            return pd.DataFrame(result.fetchall(), columns=result.keys())
+    except Exception as e:
+        logging.error(f"Failed to execute query: {str(e)}")
+        raise
+
+def get_ids_all(tags, patterns):
+    ids = []
+    for pattern in patterns:
+        logging.info(f"Pattern: {pattern}")
+        energy = tags[tags['tagpath'].str.contains(pattern, case=False)].copy()
+        logging.info(f"Matches Found: {energy.shape}")
+        ids.extend(energy['id'].tolist())  
+    return ', '.join(map(str, set(ids)))
+
+def get_data_all(table, tags, patterns, engine, unix_ms):
+    ids_str = get_ids_all(tags, patterns)
+    queries = [f'SELECT * FROM {i} WHERE tagid IN ({ids_str}) and t_stamp >= {unix_ms}' for i in table]
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        results = list(executor.map(lambda q: execute_query(q, engine), queries))
+    return pd.concat(results, ignore_index=True)
+
+def upload_file_to_s3(file_name, bucket, object_name=None):
+    object_name = object_name if object_name else file_name
+    s3_client = boto3.client('s3')
+    try:
+        s3_client.upload_file(file_name, bucket, object_name)
+        logging.info(f"Uploaded {file_name} to {bucket}/{object_name}")
+        return True
+    except boto3.exceptions.S3UploadFailedError as e:
+        logging.error(f"Upload failed for {file_name} to {bucket}/{object_name}: {str(e)}")
+        return False
+
+def download_s3_file(bucket, key, local_path, file_path):
+    s3 = boto3.client('s3')
+    try:
+        with open(local_path, 'wb') as f:
+            s3.download_fileobj(bucket, key, f)
+        logging.info(f"Downloaded {key} to {local_path}")
+    except Exception as e:
+        logging.error(f"Failed to download {key} from {bucket}: {str(e)}")
+        raise
+
+def find_min_within_one_month(timestamps, one_month_ago):
+    while timestamps:
+        min_key, min_date = min(timestamps.items(), key=lambda x: x[1])
+        if min_date >= one_month_ago:
+            return min_key, min_date
+        timestamps.pop(min_key)
+    return None, None
+
+plant = 'example_plant'
+file_path = f'/dev/shm/{plant}_data/'
+bucket_name = 'your_bucket_name'
+directory_s3 = f'{plant}/scada/'
+
+if not os.path.exists(file_path):
+    os.makedirs(file_path)
+    print(f"Directory created: {file_path}")
+else:
+    print(f"Directory already exists: {file_path}")
+
+files = {
+    'sensor_data_1.parquet': 'sensor_1',
+    'sensor_data_2.parquet': 'sensor_2'
+}
+
+s3 = s3fs.S3FileSystem()
+last_dates = {}
+actual_data = {}
+
+for filename, var_name in files.items():
+    try:
+        df = load_data(file_path + filename, file_type='parquet')
+        last_dates[var_name] = df['datetime'].max()
+        actual_data[filename] = df.copy()
+    except:
+        try:
+            s3_path = f"s3://{bucket_name}/{directory_s3}{filename}"
+            table = pq.ParquetDataset(s3_path, filesystem=s3).read()
+            df = table.to_pandas()
+            last_dates[var_name] = df['datetime'].max()
+            actual_data[filename] = df.copy()
+        except:
+            print(f'No file found on S3 or EC2 for {filename}')
+
+one_month_ago = datetime.datetime.now() - datetime.timedelta(days=30)
+min_key, min_date = find_min_within_one_month(last_dates.copy(), one_month_ago)
+
+if min_key:
+    yr, mon, day = min_date.year, min_date.month, min_date.day
+else:
+    yr, mon, day = 2024, 8, 1
+
+date_object = datetime.datetime.strptime(f"{yr}-{mon}-{day}", '%Y-%m-%d')
+unix_ms = int(date_object.timestamp() * 1000)
+
+with open('/path/to/your/db_credentials.json', 'r') as f:
+    db_credentials = json.load(f)
+
+engine = create_db_connection(
+    db_credentials['YourDB']['user'],
+    db_credentials['YourDB']['password'],
+    db_credentials['YourDB']['host'],
+    db_credentials['YourDB']['dbname']
+)
+
+inspector = inspect(engine)
+tags = pd.read_sql('SELECT * FROM your_tags_table', engine)
+
+tables_data = inspector.get_table_names(schema='public')
+tables = filter_tables(tables_data, year=yr, start_month=mon)
+
+patterns = [
+    r'sensor/module/temp_1$',
+    r'sensor/module/temp_2$',
+    r'sensor/module/temp_3$'
+]
+
+final_result = get_data_all(tables, tags, patterns, engine, unix_ms)
+final_result = pd.merge(final_result, tags[['id', 'tagpath']], 'left', left_on='tagid', right_on='id')
+
+s3 = s3fs.S3FileSystem()
+for tagpath in final_result['tagpath'].unique():
+    data = final_result[final_result['tagpath'] == tagpath].copy()
+    data = data[data['dataintegrity'] != 0].copy()
+    if data.empty:
+        continue
+    data['t_stamp'] = pd.to_datetime(data['t_stamp'], unit='ms', utc=True).dt.tz_convert('America/Bogota').dt.tz_localize(None)
+    col_name = data['tagpath'].str.replace('/', '_').unique().item()
+    data = data.drop(columns=['id', 'dataintegrity', 'tagpath', 'tagid'], axis=1).dropna(axis=1, how='all')
+    value_column = [col for col in data.columns if col not in ['t_stamp', 'tagid']][0]
+    data.rename(columns={value_column: col_name, 't_stamp': 'datetime'}, inplace=True)
+    data = data[['datetime', col_name]]
+    combined_data = pd.concat([actual_data.get(f'{col_name}.parquet', pd.DataFrame()), data], ignore_index=True)
+    combined_data = combined_data.drop_duplicates().sort_values('datetime').reset_index(drop=True)
+    cleaned_table = pyarrow.Table.from_pandas(combined_data)
+    existing_file_path = f's3://{bucket_name}/{directory_s3}{col_name}.parquet'
+    with s3.open(existing_file_path, 'wb') as f:
+        pq.write_table(cleaned_table, f)
+    print(f"Data has been appended: {existing_file_path}")
