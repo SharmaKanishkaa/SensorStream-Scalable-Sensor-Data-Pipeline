@@ -51,9 +51,7 @@ Using Apache Airflow, the pipeline is fully automated and resilient to failures,
 ## Workflow
 1. Configuration Loading
 Configuration is loaded from:
-
 Airflow Variables (for file paths, sensor patterns)
-
 AWS Secrets Manager (for secure credentials)
 
 2. Sensor Metadata Fetching
@@ -67,23 +65,19 @@ For each filtered table, sensor data is pulled using parallelized JDBC queries b
 
 5. Data Transformation
 Invalid entries (e.g., dataintegrity = 0) are removed.
-
 Sensor timestamps are converted to readable datetime.
-
 Joined with metadata using broadcast join for efficiency.
 
 6. Writing to S3
 Final DataFrame is partitioned by tagpath (e.g., temperature, pressure, energy) and written to S3 in Parquet format.
-
 Files are optimized to cap records per file and prevent duplication.
 
 7. Validation & Orchestration
 Airflow DAG validates that S3 files are written.
-
 Separate Airflow DAG refreshes config and credentials weekly.
 
-```
 
+---
 ## Installation & Setup
 
 ### 1. Prerequisites
